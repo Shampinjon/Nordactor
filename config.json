@@ -1,4 +1,8 @@
 {
     "theme": "system",
-    "language": "en"
+    "language": "en",
+    "check_updates": true,
+    "skipped_version": "",
+    "restore_tabs": true,
+    "open_tabs": []
 }
