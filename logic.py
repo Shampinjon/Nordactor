@@ -1,18 +1,22 @@
 import json
 import os
-
+import urllib.request
+import webbrowser
 from PySide6.QtCore import QTimer, Qt, QVariantAnimation
-from PySide6.QtGui import QAction, QKeySequence, QTextCursor, QFont, QPalette, QColor
+from PySide6.QtGui import QAction, QKeySequence, QTextCursor, QTextDocument, QFont, QPalette, QColor, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QCheckBox,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QStatusBar,
+    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -24,119 +28,108 @@ from PySide6.QtWidgets import (
 )
 
 
-CONFIG_FILE = "config.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+APP_VERSION = "1.1"
+GITHUB_LATEST_URL = "https://api.github.com/repos/Shampinjon/Nordactor/releases/latest"
+GITHUB_RELEASES_PAGE = "https://github.com/Shampinjon/Nordactor/releases"
+TRANSLATIONS_FILE = os.path.join(BASE_DIR, "translations.json")
 
 
-TRANSLATIONS = {
-    "en": {
-        "app_name": "Nordactor",
-        "app_description": "Write something...",
-        "waiting": "Waiting for action...",
-        "saved": "Saved",
-        "file_opened": "File opened",
-        "settings_opened": "Settings opened",
-        "settings_saved": "Settings saved",
-        "untitled": "Untitled.txt",
+def load_translations():
+    try:
+        with open(TRANSLATIONS_FILE, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except Exception:
+        return {"en": {}, "ru": {}}
 
-        "menu_file": "File",
-        "menu_help": "Help",
-        "new": "New",
-        "open": "Open...",
-        "save": "Save",
-        "save_as": "Save As...",
-        "settings": "Settings",
-        "close_tab": "Close Tab",
-        "exit": "Exit",
-        "about": "About",
 
-        "settings_title": "Settings",
-        "settings_subtitle": "Choose interface theme and language",
-        "theme": "Theme",
-        "language": "Language",
-        "back": "Back",
-
-        "theme_system": "System",
-        "theme_light": "Light",
-        "theme_dark": "Dark",
-        "theme_oled": "OLED",
-
-        "language_en": "English",
-        "language_ru": "Русский",
-
-        "open_file_title": "Open file",
-        "save_file_title": "Save file as",
-        "text_files_filter": "Text files (*.txt);;All files (*)",
-
-        "unsaved_title": "Unsaved file",
-        "unsaved_message": "File is not saved. Save changes?",
-
-        "error_title": "Error",
-        "open_error": "Failed to open file:",
-        "save_error": "Failed to save file:",
-
-        "warning_title": "Warning",
-        "config_save_error": "Failed to save settings:",
-
-        "about_title": "About",
-        "about_message": "Nordactor\nA simple text editor.",
-    },
-    "ru": {
-        "app_name": "Nordactor",
-        "app_description": "Напишите что-нибудь...",
-        "waiting": "Жду действие...",
-        "saved": "Сохранено",
-        "file_opened": "Файл открыт",
-        "settings_opened": "Открыты настройки",
-        "settings_saved": "Настройки сохранены",
-        "untitled": "Новый_документ.txt",
-
-        "menu_file": "Файл",
-        "menu_help": "Справка",
-        "new": "Новый",
-        "open": "Открыть...",
-        "save": "Сохранить",
-        "save_as": "Сохранить как...",
-        "settings": "Настройки",
-        "close_tab": "Закрыть вкладку",
-        "exit": "Выход",
-        "about": "О программе",
-
-        "settings_title": "Настройки",
-        "settings_subtitle": "Выбери тему интерфейса и язык",
-        "theme": "Тема",
-        "language": "Язык",
-        "back": "Назад",
-
-        "theme_system": "Системная",
-        "theme_light": "Светлая",
-        "theme_dark": "Тёмная",
-        "theme_oled": "OLED",
-
-        "language_en": "English",
-        "language_ru": "Русский",
-
-        "open_file_title": "Открыть файл",
-        "save_file_title": "Сохранить файл как",
-        "text_files_filter": "Текстовые файлы (*.txt);;Все файлы (*)",
-
-        "unsaved_title": "Несохранённый файл",
-        "unsaved_message": "Файл не сохранён. Сохранить изменения?",
-
-        "error_title": "Ошибка",
-        "open_error": "Не удалось открыть файл:",
-        "save_error": "Не удалось сохранить файл:",
-
-        "warning_title": "Предупреждение",
-        "config_save_error": "Не удалось сохранить настройки:",
-
-        "about_title": "О программе",
-        "about_message": "Nordactor\nПростой текстовый редактор.",
-    },
-}
+TRANSLATIONS = load_translations()
 
 
 THEME_KEYS = ["system", "light", "dark", "oled"]
 LANGUAGE_KEYS = ["en", "ru"]
+
+
+class HoverTabBar(QTabBar):
+    def __init__(self, restore_callback, max_title_length=22, parent=None):
+        super().__init__(parent)
+        self.restore_callback = restore_callback
+        self.max_title_length = max_title_length
+        self.hovered_index = -1
+        self.hover_offset = 0
+        self.hover_timer = QTimer(self)
+        self.hover_timer.setInterval(140)
+        self.hover_timer.timeout.connect(self.advance_hover_text)
+        self.setMouseTracking(True)
+        self.setExpanding(False)
+        self.setElideMode(Qt.ElideRight)
+        self.setUsesScrollButtons(True)
+
+    def mouseMoveEvent(self, event):
+        index = self.tabAt(event.pos())
+        if index != self.hovered_index:
+            self.set_hovered_index(index)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self.set_hovered_index(-1)
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event):
+        if self.count() == 0:
+            super().wheelEvent(event)
+            return
+
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+
+        current = self.currentIndex()
+        if delta < 0 and current < self.count() - 1:
+            self.setCurrentIndex(current + 1)
+            event.accept()
+            return
+        if delta > 0 and current > 0:
+            self.setCurrentIndex(current - 1)
+            event.accept()
+            return
+
+        super().wheelEvent(event)
+
+    def set_hovered_index(self, index):
+        if self.hovered_index != -1:
+            self.restore_callback(self.hovered_index)
+
+        self.hovered_index = -1
+        self.hover_timer.stop()
+        self.hover_offset = 0
+
+        if index < 0:
+            return
+
+        full_title = self.tabToolTip(index) or self.tabText(index)
+        if len(full_title) <= self.max_title_length:
+            return
+
+        self.hovered_index = index
+        self.hover_timer.start()
+
+    def advance_hover_text(self):
+        if self.hovered_index < 0 or self.hovered_index >= self.count():
+            self.hover_timer.stop()
+            return
+
+        full_title = self.tabToolTip(self.hovered_index) or self.tabText(self.hovered_index)
+        if len(full_title) <= self.max_title_length:
+            self.hover_timer.stop()
+            return
+
+        padded = full_title + "   "
+        visible = (padded * 2)[self.hover_offset:self.hover_offset + self.max_title_length]
+        self.setTabText(self.hovered_index, visible)
+        self.hover_offset = (self.hover_offset + 1) % len(padded)
 
 
 class EditorTab(QPlainTextEdit):
@@ -185,9 +178,13 @@ class SettingsPage(QWidget):
 
         self.theme_combo = QComboBox()
         self.language_combo = QComboBox()
+        self.check_updates_box = QCheckBox()
+        self.restore_tabs_box = QCheckBox()
 
         self.form_layout.addRow(self.theme_label, self.theme_combo)
         self.form_layout.addRow(self.language_label, self.language_combo)
+        self.form_layout.addRow(self.check_updates_box)
+        self.form_layout.addRow(self.restore_tabs_box)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
@@ -229,6 +226,8 @@ class SettingsPage(QWidget):
         self.language_combo.blockSignals(False)
 
     def refresh_texts(self, t_func, current_theme, current_language):
+        self.check_updates_box.setText(t_func("check_updates"))
+        self.restore_tabs_box.setText(t_func("restore_tabs"))
         self.title_label.setText(t_func("settings_title"))
         self.subtitle_label.setText(t_func("settings_subtitle"))
         self.theme_label.setText(f'{t_func("theme")}:')
@@ -245,6 +244,10 @@ class NordactorWindow(QMainWindow):
 
         self.current_theme = "system"
         self.current_language = "en"
+        self.check_updates_enabled = True
+        self.skipped_version = ""
+        self.restore_tabs_enabled = True
+        self.open_tabs_paths = []
         self.theme_animation = None
 
         self.setWindowTitle("Nordactor")
@@ -262,10 +265,17 @@ class NordactorWindow(QMainWindow):
         self.editor_layout.setSpacing(0)
 
         self.tab_widget = QTabWidget()
+        self.tab_bar = HoverTabBar(self.restore_single_tab_title, parent=self.tab_widget)
+        self.tab_widget.setTabBar(self.tab_bar)
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
+        self.tab_widget.setUsesScrollButtons(True)
+        self.tab_widget.tabBar().setElideMode(Qt.ElideRight)
+        self.tab_widget.tabBar().setExpanding(False)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self.update_window_title)
+
+        self.search_panel = self.create_search_panel()
 
         self.new_tab_button = QToolButton()
         self.new_tab_button.setText("+")
@@ -273,6 +283,7 @@ class NordactorWindow(QMainWindow):
         self.new_tab_button.clicked.connect(self.new_tab)
         self.tab_widget.setCornerWidget(self.new_tab_button, Qt.TopRightCorner)
 
+        self.editor_layout.addWidget(self.search_panel)
         self.editor_layout.addWidget(self.tab_widget)
 
         self.settings_page = SettingsPage()
@@ -289,17 +300,219 @@ class NordactorWindow(QMainWindow):
 
         self.load_config()
         self.create_menu()
+        self.create_shortcuts()
         self.apply_theme(self.current_theme)
         self.refresh_ui_texts()
-        self.new_tab()
+        self.restore_tabs_on_startup()
+        QTimer.singleShot(1500, self.check_for_updates)
+
+    def restore_tabs_on_startup(self):
+        restored_any = False
+
+        if self.restore_tabs_enabled:
+            for file_path in self.open_tabs_paths:
+                if self.open_file_from_path(file_path):
+                    restored_any = True
+
+        if not restored_any:
+            self.new_tab()
+
+    def get_open_tabs_paths(self):
+        paths = []
+        for index in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(index)
+            if isinstance(widget, EditorTab) and widget.file_path:
+                paths.append(widget.file_path)
+        return paths
+    def normalize_version(self, version: str):
+        version = version.strip().lower()
+        if version.startswith("v"):
+            version = version[1:]
+        try:
+            return tuple(int(part) for part in version.split("."))
+        except ValueError:
+            return (0,)
+        
+    def open_file_from_path(self, file_path):
+        if not file_path or not os.path.exists(file_path):
+            return False
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as file:
+                content = file.read()
+        except Exception:
+            return False
+
+        editor = EditorTab()
+        editor.setPlainText(content)
+        editor.setPlaceholderText(self.t("app_description"))
+        editor.file_path = file_path
+        editor.document().setModified(False)
+
+        index = self.tab_widget.addTab(editor, editor.get_display_name(self.t))
+        self.tab_widget.setCurrentIndex(index)
+
+        editor.textChanged.connect(lambda ed=editor: self.on_text_changed(ed))
+        self.update_tab_title(editor)
+        self.update_window_title()
+
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.Start)
+        editor.setTextCursor(cursor)
+
+        return True
+    
+    def fetch_latest_release(self):
+        try:
+            request = urllib.request.Request(
+                GITHUB_LATEST_URL,
+                headers={"User-Agent": "Nordactor"}
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                tag_name = data.get("tag_name", "")
+                html_url = data.get("html_url", GITHUB_RELEASES_PAGE)
+
+                if not tag_name:
+                    return None
+
+                latest_version = tag_name.lstrip("v").strip()
+
+                return {
+                    "version": latest_version,
+                    "url": html_url
+                }
+        except Exception:
+            return None
+
+    def check_for_updates(self):
+        if not self.check_updates_enabled:
+            return
+
+        release_info = self.fetch_latest_release()
+        if not release_info:
+            return
+
+        latest_version = release_info["version"]
+        release_url = release_info["url"]
+
+        if self.skipped_version == latest_version:
+            return
+
+        if self.normalize_version(latest_version) <= self.normalize_version(APP_VERSION):
+            return
+
+        self.show_update_dialog(latest_version, release_url)
+
+    def show_update_dialog(self, latest_version, release_url):
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(self.t("update_title"))
+        msg_box.setText(
+            self.t("update_message").format(
+                current=APP_VERSION,
+                latest=latest_version
+            )
+        )
+        msg_box.setIcon(QMessageBox.Information)
+
+        skip_button = msg_box.addButton(self.t("skip_version"), QMessageBox.ActionRole)
+        github_button = msg_box.addButton(self.t("open_github"), QMessageBox.AcceptRole)
+        later_button = msg_box.addButton(self.t("later"), QMessageBox.RejectRole)
+
+        msg_box.exec()
+
+        clicked = msg_box.clickedButton()
+
+        if clicked == skip_button:
+            self.skipped_version = latest_version
+            self.save_config()
+        elif clicked == github_button:
+            webbrowser.open(release_url)
 
     def t(self, key):
-        return TRANSLATIONS[self.current_language].get(key, key)
+        return TRANSLATIONS.get(self.current_language, {}).get(key, key)
+
+    def create_shortcuts(self):
+        QShortcut(QKeySequence("F3"), self, self.find_next)
+        QShortcut(QKeySequence("Shift+F3"), self, self.find_previous)
+        QShortcut(QKeySequence("Esc"), self, self.hide_search_panel)
+
+    def create_search_panel(self):
+        panel = QFrame()
+        panel.setObjectName("SearchPanel")
+        panel.hide()
+
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(8)
+
+        self.search_label = QLabel()
+        self.search_input = QLineEdit()
+        self.search_input.returnPressed.connect(self.find_next)
+
+        self.search_prev_button = QToolButton()
+        self.search_prev_button.setText("↑")
+        self.search_prev_button.clicked.connect(self.find_previous)
+
+        self.search_next_button = QToolButton()
+        self.search_next_button.setText("↓")
+        self.search_next_button.clicked.connect(self.find_next)
+
+        self.search_close_button = QToolButton()
+        self.search_close_button.setText("✕")
+        self.search_close_button.clicked.connect(self.hide_search_panel)
+
+        layout.addWidget(self.search_label)
+        layout.addWidget(self.search_input, 1)
+        layout.addWidget(self.search_prev_button)
+        layout.addWidget(self.search_next_button)
+        layout.addWidget(self.search_close_button)
+
+        return panel
+
+    def toggle_search_panel(self):
+        if self.search_panel.isVisible():
+            self.hide_search_panel()
+        else:
+            self.search_panel.show()
+            self.search_input.selectAll()
+
+    def hide_search_panel(self):
+        if self.search_panel.isVisible():
+            self.search_panel.hide()
+            self.reset_status_message()
+
+    def _find_text(self, backward=False):
+        editor = self.get_current_editor()
+        if not editor:
+            return
+
+        query = self.search_input.text()
+        if not query:
+            return
+
+        find_flags = QTextDocument.FindBackward if backward else QTextDocument.FindFlag(0)
+        found = editor.find(query, find_flags)
+
+        if not found:
+            cursor = editor.textCursor()
+            cursor.movePosition(QTextCursor.End if backward else QTextCursor.Start)
+            editor.setTextCursor(cursor)
+            found = editor.find(query, find_flags)
+
+        self.show_temporary_status(self.t("found") if found else self.t("not_found"), 1500)
+
+    def find_next(self):
+        self._find_text(backward=False)
+
+    def find_previous(self):
+        self._find_text(backward=True)
 
     def create_menu(self):
         self.menuBar().clear()
 
         self.file_menu = self.menuBar().addMenu(self.t("menu_file"))
+        self.edit_menu = self.menuBar().addMenu(self.t("menu_edit"))
         self.help_menu = self.menuBar().addMenu(self.t("menu_help"))
 
         self.new_action = QAction(self.t("new"), self)
@@ -321,6 +534,21 @@ class NordactorWindow(QMainWindow):
         self.save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self.save_as_action.triggered.connect(self.save_file_as)
         self.file_menu.addAction(self.save_as_action)
+
+        self.edit_find_action = QAction(self.t("find"), self)
+        self.edit_find_action.setShortcut(QKeySequence("Ctrl+F"))
+        self.edit_find_action.triggered.connect(self.toggle_search_panel)
+        self.edit_menu.addAction(self.edit_find_action)
+
+        self.find_next_action = QAction(self.t("find_next"), self)
+        self.find_next_action.setShortcut(QKeySequence("F3"))
+        self.find_next_action.triggered.connect(self.find_next)
+        self.edit_menu.addAction(self.find_next_action)
+
+        self.find_previous_action = QAction(self.t("find_previous"), self)
+        self.find_previous_action.setShortcut(QKeySequence("Shift+F3"))
+        self.find_previous_action.triggered.connect(self.find_previous)
+        self.edit_menu.addAction(self.find_previous_action)
 
         self.file_menu.addSeparator()
 
@@ -348,6 +576,11 @@ class NordactorWindow(QMainWindow):
     def refresh_ui_texts(self):
         self.create_menu()
         self.settings_page.refresh_texts(self.t, self.current_theme, self.current_language)
+        self.search_label.setText(f'{self.t("find")}:')
+        self.search_input.setPlaceholderText(self.t("search"))
+        self.search_prev_button.setToolTip(self.t("find_previous"))
+        self.search_next_button.setToolTip(self.t("find_next"))
+        self.search_close_button.setToolTip(self.t("close_search"))
 
         for i in range(self.tab_widget.count()):
             widget = self.tab_widget.widget(i)
@@ -449,6 +682,19 @@ class NordactorWindow(QMainWindow):
                     background: #2d2d2d;
                     color: #d0d0d0;
                     border-top: 1px solid #3d3d3d;
+                }
+
+                #SearchPanel {
+                    background: #2d2d2d;
+                    border-bottom: 1px solid #3d3d3d;
+                }
+
+                QLineEdit {
+                    background: #3a3a3a;
+                    color: #f0f0f0;
+                    border: 1px solid #4a4a4a;
+                    border-radius: 8px;
+                    padding: 7px 10px;
                 }
 
                 #SettingsPage {
@@ -593,6 +839,19 @@ class NordactorWindow(QMainWindow):
                     border-top: 1px solid #1a1a1a;
                 }
 
+                #SearchPanel {
+                    background: #000000;
+                    border-bottom: 1px solid #1a1a1a;
+                }
+
+                QLineEdit {
+                    background: #0c0c0c;
+                    color: #f3de47;
+                    border: 1px solid #2a2a2a;
+                    border-radius: 8px;
+                    padding: 7px 10px;
+                }
+
                 #SettingsPage {
                     background: #000000;
                 }
@@ -730,6 +989,19 @@ class NordactorWindow(QMainWindow):
                 background: #f0f0f0;
                 color: #333333;
                 border-top: 1px solid #cfcfcf;
+            }
+
+            #SearchPanel {
+                background: #f0f0f0;
+                border-bottom: 1px solid #cfcfcf;
+            }
+
+            QLineEdit {
+                background: #ffffff;
+                color: #111111;
+                border: 1px solid #c8c8c8;
+                border-radius: 8px;
+                padding: 7px 10px;
             }
 
             #SettingsPage {
@@ -870,6 +1142,10 @@ class NordactorWindow(QMainWindow):
 
         theme = data.get("theme")
         language = data.get("language")
+        check_updates = data.get("check_updates", True)
+        skipped_version = data.get("skipped_version", "")
+        restore_tabs = data.get("restore_tabs", True)
+        open_tabs = data.get("open_tabs", [])
 
         if theme in THEME_KEYS:
             self.current_theme = theme
@@ -877,10 +1153,21 @@ class NordactorWindow(QMainWindow):
         if language in LANGUAGE_KEYS:
             self.current_language = language
 
+        self.check_updates_enabled = bool(check_updates)
+        self.skipped_version = str(skipped_version)
+        self.restore_tabs_enabled = bool(restore_tabs)
+
+        if isinstance(open_tabs, list):
+            self.open_tabs_paths = [str(path) for path in open_tabs]
+
     def save_config(self):
         data = {
             "theme": self.current_theme,
             "language": self.current_language,
+            "check_updates": self.check_updates_enabled,
+            "skipped_version": self.skipped_version,
+            "restore_tabs": self.restore_tabs_enabled,
+            "open_tabs": self.get_open_tabs_paths() if self.restore_tabs_enabled else [],
         }
 
         try:
@@ -892,7 +1179,6 @@ class NordactorWindow(QMainWindow):
                 self.t("warning_title"),
                 f'{self.t("config_save_error")}\n{error}'
             )
-
     def get_current_editor(self):
         widget = self.tab_widget.currentWidget()
         if isinstance(widget, EditorTab):
@@ -915,6 +1201,18 @@ class NordactorWindow(QMainWindow):
         self.update_tab_title(editor)
         self.update_window_title()
 
+    def shorten_tab_title(self, title, max_length=22):
+        if len(title) <= max_length:
+            return title
+        return title[: max_length - 3] + "..."
+
+    def restore_single_tab_title(self, index):
+        if index < 0 or index >= self.tab_widget.count():
+            return
+        widget = self.tab_widget.widget(index)
+        if isinstance(widget, EditorTab):
+            self.update_tab_title(widget)
+
     def update_tab_title(self, editor):
         index = self.tab_widget.indexOf(editor)
         if index == -1:
@@ -924,7 +1222,8 @@ class NordactorWindow(QMainWindow):
         if editor.is_modified():
             title = f"{title} *"
 
-        self.tab_widget.setTabText(index, title)
+        self.tab_widget.setTabToolTip(index, title)
+        self.tab_widget.setTabText(index, self.shorten_tab_title(title))
 
     def update_window_title(self):
         editor = self.get_current_editor()
@@ -949,17 +1248,15 @@ class NordactorWindow(QMainWindow):
         if not file_path:
             return
 
-        try:
-            with open(file_path, "r", encoding="utf-8") as file:
-                content = file.read()
-        except Exception as error:
+        success = self.open_file_from_path(file_path)
+        if success:
+            self.show_temporary_status(self.t("file_opened"))
+        else:
             QMessageBox.critical(
                 self,
                 self.t("error_title"),
-                f'{self.t("open_error")}\n{error}'
+                f'{self.t("open_error")}\n{file_path}'
             )
-            return
-
         editor = EditorTab()
         editor.setPlainText(content)
         editor.setPlaceholderText(self.t("app_description"))
@@ -1087,6 +1384,8 @@ class NordactorWindow(QMainWindow):
 
     def show_settings_page(self):
         self.settings_page.refresh_texts(self.t, self.current_theme, self.current_language)
+        self.settings_page.check_updates_box.setChecked(self.check_updates_enabled)
+        self.settings_page.restore_tabs_box.setChecked(self.restore_tabs_enabled)
         self.stack.setCurrentWidget(self.settings_page)
         self.status_bar.showMessage(self.t("settings_opened"))
 
@@ -1096,7 +1395,10 @@ class NordactorWindow(QMainWindow):
 
     def save_settings(self):
         selected_theme = self.settings_page.theme_combo.currentData()
+        selected_restore_tabs = self.settings_page.restore_tabs_box.isChecked()
         selected_language = self.settings_page.language_combo.currentData()
+        selected_check_updates = self.settings_page.check_updates_box.isChecked()
+        self.restore_tabs_enabled = selected_restore_tabs
 
         language_changed = selected_language != self.current_language
         theme_changed = selected_theme != self.current_theme
@@ -1111,6 +1413,8 @@ class NordactorWindow(QMainWindow):
         else:
             self.apply_theme(self.current_theme)
 
+        self.check_updates_enabled = selected_check_updates
+
         self.save_config()
         self.show_editor_page()
         self.show_temporary_status(self.t("settings_saved"))
@@ -1123,5 +1427,5 @@ class NordactorWindow(QMainWindow):
                 if not self.maybe_save(widget):
                     event.ignore()
                     return
-
+        self.save_config()
         event.accept()
