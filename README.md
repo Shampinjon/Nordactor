@@ -1,5 +1,5 @@
 # Nordactor
-Nordactor is a simple text editor on PySide
+Nordactor is a simple text editor on PySide6 for windows and Linux
 <img width="1128" height="786" alt="Снимок экрана от 2026-03-24 08-48-11" src="https://github.com/user-attachments/assets/fa46e6e9-ed43-4863-8a04-226ae45061d9" />
 <img width="1128" height="786" alt="Снимок экрана от 2026-03-24 08-48-39" src="https://github.com/user-attachments/assets/4eba8ce7-f151-4616-86b7-be149508e5ce" />
 # Requierments
