@@ -7,6 +7,7 @@ Python3
 
 # Installing
 sudo apt install nordactor-1.1.deb
+
 pip install PySide6 --break-system-packages
 
 ## Features
